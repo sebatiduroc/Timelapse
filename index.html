@@ -456,7 +456,17 @@
       fastStart:'in-memory'
     });
     videoEncoder = new VideoEncoder({
-      output:(chunk, meta)=> muxer.addVideoChunk(chunk, meta),
+      output:(chunk, meta)=> {
+        // Safari ne renseigne pas toujours decoderConfig.colorSpace, requis par le muxer : on le complète.
+        if(meta && meta.decoderConfig && !meta.decoderConfig.colorSpace){
+          meta = Object.assign({}, meta, {
+            decoderConfig: Object.assign({}, meta.decoderConfig, {
+              colorSpace: { primaries:'bt709', transfer:'bt709', matrix:'bt709', fullRange:false }
+            })
+          });
+        }
+        muxer.addVideoChunk(chunk, meta);
+      },
       error:(e)=> {
         console.error(e);
         stopRecording(true);
