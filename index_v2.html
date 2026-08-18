@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#101820">
+<title>Time-lapse iPad — V2</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;color:#eef3f7;background:#101820}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(160deg,#101820,#172631);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:760px;margin:auto;padding:22px 18px 34px}h1{font-size:30px;margin:0 0 5px}.sub{color:#aebdc7;margin:0 0 22px}
+.card{background:#1b2b35;border:1px solid #30434e;border-radius:20px;padding:18px;margin-bottom:16px;box-shadow:0 8px 30px #0003}
+label{display:block;font-weight:700;margin-bottom:8px}.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}
+input,select,button{font:inherit;border-radius:13px;border:1px solid #526874;background:#10202a;color:#fff;padding:13px}button{border:0;background:#2e9d74;font-weight:750;cursor:pointer}button.secondary{background:#314754}button.danger{background:#b74b4b}button:disabled{opacity:.45;cursor:not-allowed}
+video{width:100%;aspect-ratio:16/9;background:#000;border-radius:16px;object-fit:cover;margin-top:10px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.stat{background:#10202a;border-radius:12px;padding:10px;text-align:center}.stat b{display:block;font-size:20px}.stat small{color:#9eb0ba}
+.note{font-size:14px;line-height:1.45;color:#b8c6cd}.warning{background:#3a2e1d;border-color:#6b5432}.success{background:#18372d;border-color:#2c654f}
+.status{font-weight:650;margin-top:12px;min-height:22px}.bar{height:8px;background:#0d171d;border-radius:9px;overflow:hidden;margin-top:12px}.bar>div{height:100%;width:0;background:#56c795;transition:width .15s}
+.hidden{display:none!important}.pill{display:inline-block;padding:5px 9px;border-radius:999px;background:#29414d;font-size:13px;margin-top:5px}
+@media(max-width:500px){.stats{grid-template-columns:1fr 1fr}.stats .stat:last-child{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<main>
+<h1>🎞️ Time-lapse iPad</h1>
+<p class="sub">Version 2 — conçue pour les captures longues de plusieurs jours.</p>
+
+<section class="card">
+<label>1. Intervalle entre deux images</label>
+<div class="row">
+<input id="interval" type="number" min="1" max="60" value="60" inputmode="numeric">
+<select id="unit"><option value="1">seconde(s)</option><option value="60" selected>minute(s)</option></select>
+</div>
+<p class="note">Les images sont stockées temporairement dans le stockage local du navigateur, et non dans Photos. Elles sont supprimées une par une pendant l'encodage.</p>
+<button id="start">Démarrer la capture</button>
+<button id="stop" class="danger hidden">Arrêter la capture</button>
+<div id="status" class="status"></div>
+<div class="stats">
+<div class="stat"><b id="frames">0</b><small>images</small></div>
+<div class="stat"><b id="elapsed">00:00:00</b><small>durée</small></div>
+<div class="stat"><b id="estimated">—</b><small>vidéo à 30 i/s</small></div>
+</div>
+</section>
+
+<section class="card">
+<label>Caméra</label>
+<video id="camera" autoplay muted playsinline></video>
+<p class="note">Pour une capture de plusieurs jours, branche l'iPad au secteur et désactive son verrouillage automatique. Ne quitte pas Safari.</p>
+</section>
+
+<section id="encodeCard" class="card hidden">
+<label>2. Créer la vidéo</label>
+<div class="row">
+<select id="fps"><option>10</option><option>15</option><option>20</option><option>24</option><option selected>30</option><option>50</option></select>
+<span>images / seconde</span>
+</div>
+<p id="duration" class="note"></p>
+<div class="bar"><div id="progress"></div></div>
+<div id="encodeStatus" class="status"></div>
+<div id="previewBox" class="hidden">
+<video id="result" controls playsinline></video>
+<div class="row" style="margin-top:12px">
+<button id="save">Enregistrer dans Photos</button>
+<button id="discard" class="secondary">Supprimer</button>
+</div>
+</div>
+<button id="make">Créer la vidéo</button>
+</section>
+
+<section class="card warning">
+<strong>Pourquoi cette V2 est adaptée aux longues captures</strong>
+<p class="note">La V1 conservait toutes les images dans la mémoire vive. La V2 les écrit temporairement dans IndexedDB. Lors de la création de la vidéo, elles sont lues une par une puis immédiatement supprimées. Ainsi, 10 000 images ne nécessitent plus 10 000 images simultanément en RAM.</p>
+<p class="note"><strong>Important :</strong> le stockage temporaire reste limité par l'espace disponible et les quotas du navigateur. Pour des captures de plusieurs jours, il est donc préférable d'utiliser une résolution raisonnable.</p>
+</section>
+</main>
+
+<script type="module">
+import { Muxer, ArrayBufferTarget } from "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm";
+
+const $=id=>document.getElementById(id);
+const camera=$("camera");
+const canvas=document.createElement("canvas");
+const ctx=canvas.getContext("2d");
+let stream=null,timer=null,wakeLock=null,capturing=false,started=0;
+let db=null,frameCount=0,videoURL=null;
+
+function fmt(s){
+  s=Math.max(0,Math.floor(s)); const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
+  return [h,m,x].map(v=>String(v).padStart(2,"0")).join(":");
+}
+function intervalMs(){return Number($("interval").value)*Number($("unit").value)*1000}
+function updateStats(){
+  $("frames").textContent=frameCount;
+  $("elapsed").textContent=started?fmt((Date.now()-started)/1000):"00:00:00";
+  $("estimated").textContent=frameCount?fmt(frameCount/30):"—";
+}
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const r=indexedDB.open("TimelapseV2",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("frames",{keyPath:"id",autoIncrement:true});
+    r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error);
+  });
+}
+function clearDB(){
+  return new Promise((resolve,reject)=>{
+    const t=db.transaction("frames","readwrite"); t.objectStore("frames").clear();
+    t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);
+  });
+}
+function addFrame(blob){
+  return new Promise((resolve,reject)=>{
+    const t=db.transaction("frames","readwrite");
+    t.objectStore("frames").add({blob,time:Date.now()});
+    t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);
+  });
+}
+function getFrame(id){
+  return new Promise((resolve,reject)=>{
+    const t=db.transaction("frames","readonly"),r=t.objectStore("frames").get(id);
+    r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+  });
+}
+function deleteFrame(id){
+  return new Promise((resolve,reject)=>{
+    const t=db.transaction("frames","readwrite");t.objectStore("frames").delete(id);
+    t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);
+  });
+}
+function getAllKeys(){
+  return new Promise((resolve,reject)=>{
+    const t=db.transaction("frames","readonly"),r=t.objectStore("frames").getAllKeys();
+    r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
+  });
+}
+async function keepAwake(){
+  try{if("wakeLock" in navigator)wakeLock=await navigator.wakeLock.request("screen")}catch(e){}
+}
+async function openCamera(){
+  if(!navigator.mediaDevices?.getUserMedia)throw new Error("Caméra non disponible");
+  if(!stream)stream=await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false
+  });
+  camera.srcObject=stream;await camera.play();
+}
+function stopCamera(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+async function snap(){
+  if(!capturing||camera.readyState<2)return;
+  if(!canvas.width){canvas.width=camera.videoWidth||1280;canvas.height=camera.videoHeight||720}
+  ctx.drawImage(camera,0,0,canvas.width,canvas.height);
+  const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",0.82));
+  if(blob){await addFrame(blob);frameCount++;updateStats()}
+}
+async function startCapture(){
+  const n=Number($("interval").value);
+  if(!Number.isInteger(n)||n<1||n>60){alert("Choisis une valeur de 1 à 60.");return}
+  try{
+    db ||= await openDB();await clearDB();frameCount=0;
+    await openCamera();await keepAwake();
+    capturing=true;started=Date.now();
+    $("start").classList.add("hidden");$("stop").classList.remove("hidden");
+    $("status").textContent="Capture en cours…";
+    await snap();timer=setInterval(snap,intervalMs());updateStats();
+  }catch(e){console.error(e);alert("Impossible d'accéder à la caméra ou au stockage temporaire.")}
+}
+async function stopCapture(){
+  capturing=false;clearInterval(timer);timer=null;stopCamera();
+  if(wakeLock){try{await wakeLock.release()}catch(e){}wakeLock=null}
+  $("stop").classList.add("hidden");$("start").classList.remove("hidden");
+  updateStats();
+  if(frameCount){
+    $("encodeCard").classList.remove("hidden");
+    $("duration").textContent=`${frameCount} images prêtes. À 30 i/s : ${fmt(frameCount/30)}.`;
+    $("status").textContent="Capture terminée. Les images sont conservées temporairement pour créer la vidéo.";
+  }else $("status").textContent="Aucune image capturée.";
+}
+async function makeVideo(){
+  if(!frameCount)return;
+  $("make").disabled=true;$("save").disabled=true;$("encodeStatus").textContent="Préparation…";
+  $("progress").style.width="0%";
+  try{
+    const fps=Number($("fps").value),keys=await getAllKeys();
+    if(!keys.length)throw new Error("Aucune image");
+    const first=await getFrame(keys[0]),bmp=await createImageBitmap(first.blob);
+    canvas.width=bmp.width;canvas.height=bmp.height;bmp.close();
+    const target=new ArrayBufferTarget();
+    const muxer=new Muxer({target,video:{codec:"avc",width:canvas.width,height:canvas.height},fastStart:"in-memory"});
+    const encoder=new VideoEncoder({
+      output:(chunk,meta)=>muxer.addVideoChunk(chunk,meta),
+      error:e=>console.error(e)
+    });
+    encoder.configure({codec:"avc1.4d002a",width:canvas.width,height:canvas.height,bitrate:4000000,framerate:fps});
+    for(let i=0;i<keys.length;i++){
+      const rec=await getFrame(keys[i]);
+      const b=await createImageBitmap(rec.blob);
+      ctx.drawImage(b,0,0,canvas.width,canvas.height);b.close();
+      const vf=new VideoFrame(canvas,{timestamp:Math.round(i*1000000/fps)});
+      encoder.encode(vf,{keyFrame:i===0});vf.close();
+      await deleteFrame(keys[i]);
+      if(i%5===0){
+        $("progress").style.width=((i+1)/keys.length*100)+"%";
+        $("encodeStatus").textContent=`Création et suppression des images temporaires : ${i+1} / ${keys.length}`;
+        await new Promise(requestAnimationFrame);
+      }
+    }
+    await encoder.flush();encoder.close();muxer.finalize();
+    const blob=new Blob([target.buffer],{type:"video/mp4"});
+    if(videoURL)URL.revokeObjectURL(videoURL);
+    videoURL=URL.createObjectURL(blob);$("result").src=videoURL;
+    $("previewBox").classList.remove("hidden");$("make").classList.add("hidden");
+    $("encodeStatus").textContent=`Aperçu prêt — ${fmt(keys.length/fps)} à ${fps} images/s. Les images sources ont été supprimées.`;
+    frameCount=0;updateStats();
+    $("save").disabled=false;
+    $("save").onclick=()=>saveVideo(blob);
+  }catch(e){
+    console.error(e);$("encodeStatus").textContent="La création a échoué : "+e.message;
+    $("make").disabled=false;
+  }
+}
+async function saveVideo(blob){
+  const file=new File([blob],"timelapse.mp4",{type:"video/mp4"});
+  if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
+    try{await navigator.share({files:[file],title:"Time-lapse"});return}catch(e){if(e.name==="AbortError")return}
+  }
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="timelapse.mp4";a.click();
+  $("encodeStatus").textContent="Utilise le menu de partage puis « Enregistrer la vidéo » pour la placer dans Photos.";
+}
+$("start").onclick=startCapture;$("stop").onclick=stopCapture;$("make").onclick=makeVideo;
+$("discard").onclick=async()=>{
+  if(videoURL)URL.revokeObjectURL(videoURL);videoURL=null;$("result").removeAttribute("src");
+  $("previewBox").classList.add("hidden");$("make").classList.remove("hidden");
+  $("encodeStatus").textContent="Vidéo supprimée.";
+};
+$("fps").onchange=()=>{if(frameCount)$("duration").textContent=`${frameCount} images prêtes. À ${$("fps").value} i/s : ${fmt(frameCount/Number($("fps").value))}.`};
+setInterval(updateStats,1000);
+document.addEventListener("visibilitychange",async()=>{
+  if(capturing&&document.visibilityState!=="visible")$("status").textContent="⚠️ Safari n'est plus au premier plan : la capture peut être interrompue.";
+  if(capturing&&document.visibilityState==="visible")await keepAwake();
+});
+(async()=>{try{db=await openDB();await clearDB()}catch(e){console.error(e)}})();
+</script>
+</body>
+</html>
