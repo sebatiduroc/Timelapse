@@ -64,6 +64,11 @@
     padding:14px 18px calc(14px + env(safe-area-inset-bottom));
     max-height:44vh; overflow-y:auto;
   }
+  .sheet-header{display:flex; justify-content:flex-end; margin-bottom:8px;}
+  .version-tag{
+    font-size:10.5px; font-weight:600; letter-spacing:0.03em; color:var(--ink-dim);
+    background:var(--panel-2); border:1px solid var(--line); padding:3px 9px; border-radius:999px;
+  }
   .card{
     background:var(--panel);
     border:1px solid var(--line);
@@ -189,6 +194,9 @@
     </div>
 
     <div class="sheet">
+      <div class="sheet-header">
+        <span class="version-tag">v1</span>
+      </div>
       <div class="card">
         <div class="row">
           <div class="label">Intervalle entre deux photos</div>
@@ -458,12 +466,19 @@
     videoEncoder = new VideoEncoder({
       output:(chunk, meta)=> {
         // Safari ne renseigne pas toujours decoderConfig.colorSpace, requis par le muxer : on le complète.
-        if(meta && meta.decoderConfig && !meta.decoderConfig.colorSpace){
-          meta = Object.assign({}, meta, {
-            decoderConfig: Object.assign({}, meta.decoderConfig, {
-              colorSpace: { primaries:'bt709', transfer:'bt709', matrix:'bt709', fullRange:false }
-            })
-          });
+        if(meta && meta.decoderConfig){
+          if(!meta.decoderConfig.colorSpace){
+            meta = Object.assign({}, meta, {
+              decoderConfig: Object.assign({}, meta.decoderConfig, {
+                colorSpace: { primaries:'bt709', transfer:'bt709', matrix:'bt709', fullRange:false }
+              })
+            });
+          }
+        } else if(meta && meta.decoderConfig === null){
+          // certains navigateurs renvoient explicitement decoderConfig: null,
+          // ce qui fait planter le muxer à la finalisation ; on retire la clé.
+          meta = Object.assign({}, meta);
+          delete meta.decoderConfig;
         }
         muxer.addVideoChunk(chunk, meta);
       },
