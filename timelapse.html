@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0e0d11">
+<title>Time-lapse</title>
+<style>
+  :root{
+    --bg:#0e0d11;
+    --panel:#1a181e;
+    --panel-2:#211f26;
+    --line:#332f39;
+    --ink:#f3efe8;
+    --ink-dim:#948e9a;
+    --amber:#e0a63f;
+    --amber-dim:#8a6a2d;
+    --teal:#5fcdbb;
+    --red:#e0574a;
+    --radius:18px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    height:100%; margin:0; overflow:hidden;
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-user-select:none; user-select:none;
+  }
+  .num{
+    font-family:"SF Mono", ui-monospace, "Menlo", monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing:0.02em;
+  }
+  #app{position:fixed; inset:0; padding-top:env(safe-area-inset-top); padding-bottom:env(safe-area-inset-bottom);}
+  .screen{position:absolute; inset:0; display:none; flex-direction:column;}
+  .screen.active{display:flex;}
+
+  /* --- Viewfinder (commun aux 2 premiers écrans) --- */
+  #camWrap{position:relative; flex:1; min-height:0; overflow:hidden; background:#000;}
+  #camPreview{width:100%; height:100%; object-fit:cover; display:block;}
+  #captureCanvas{display:none;}
+
+  .topbar{
+    flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:14px 18px; background:var(--bg);
+  }
+  .brand{
+    display:flex; align-items:baseline; gap:8px;
+  }
+  .brand .dot{width:9px; height:9px; border-radius:50%; background:var(--amber); display:inline-block;}
+  .brand h1{font-size:15px; font-weight:600; margin:0; letter-spacing:0.02em;}
+  .brand .sub{font-size:11px; color:var(--ink-dim);}
+
+  .status-pill{
+    font-size:11px; padding:5px 10px; border-radius:999px; background:var(--panel-2);
+    border:1px solid var(--line); color:var(--ink-dim);
+  }
+
+  /* --- Panneau bas réglages (écran cadrage) --- */
+  .sheet{
+    flex:0 0 auto; background:var(--bg); border-top:1px solid var(--line);
+    padding:14px 18px calc(14px + env(safe-area-inset-bottom));
+    max-height:44vh; overflow-y:auto;
+  }
+  .card{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:14px 16px 12px;
+  }
+  .card + .card{margin-top:8px;}
+  .row{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  .label{font-size:13px; color:var(--ink-dim);}
+  .label b{color:var(--ink); font-weight:600;}
+
+  .interval-controls{display:flex; align-items:center; gap:10px; margin-top:10px;}
+  .stepper{
+    display:flex; align-items:center; background:var(--panel-2); border-radius:12px; border:1px solid var(--line);
+    overflow:hidden;
+  }
+  .stepper button{
+    width:40px; height:40px; border:none; background:transparent; color:var(--amber);
+    font-size:20px; font-weight:600;
+  }
+  .stepper input{
+    width:52px; text-align:center; background:transparent; border:none; color:var(--ink);
+    font-size:19px; font-weight:600; -moz-appearance:textfield;
+  }
+  .stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button{-webkit-appearance:none; margin:0;}
+
+  .unit-toggle{display:flex; background:var(--panel-2); border-radius:12px; border:1px solid var(--line); overflow:hidden; flex:1;}
+  .unit-toggle button{
+    flex:1; padding:10px 6px; border:none; background:transparent; color:var(--ink-dim); font-size:13px; font-weight:600;
+  }
+  .unit-toggle button.on{background:var(--amber); color:#20160a;}
+
+  .ratio-line{margin-top:12px; font-size:12px; color:var(--ink-dim); line-height:1.5;}
+  .ratio-line b{color:var(--teal); font-weight:600;}
+
+  .tips{font-size:12px; color:var(--ink-dim); line-height:1.6; margin:0; padding-left:18px;}
+  .tips li{margin-bottom:2px;}
+
+  .btn{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    width:100%; padding:16px; border-radius:16px; border:none;
+    font-size:16px; font-weight:700; letter-spacing:0.01em;
+  }
+  .btn-primary{background:var(--amber); color:#20160a; margin-top:10px;}
+  .btn-primary:disabled{background:#4a4038; color:#8a8078;}
+  .btn-ghost{background:var(--panel-2); color:var(--ink); border:1px solid var(--line);}
+  .btn-danger{background:var(--red); color:#2a0d09;}
+
+  /* --- Ecran enregistrement --- */
+  .hud-top{display:flex; justify-content:space-between; align-items:flex-start; padding:14px 16px 0;}
+  .hud-card{
+    background:rgba(20,18,24,0.72); border:1px solid rgba(255,255,255,0.08); backdrop-filter:blur(8px);
+    border-radius:14px; padding:10px 14px;
+  }
+  .hud-frames .n{font-size:26px; font-weight:700; line-height:1;}
+  .hud-frames .l{font-size:10px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.08em; margin-top:2px;}
+  .hud-clock{text-align:right;}
+  .hud-clock .n{font-size:20px; font-weight:600;}
+  .hud-clock .l{font-size:10px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.08em;}
+
+  .rec-indicator{display:flex; align-items:center; gap:6px; font-size:11px; font-weight:700; letter-spacing:0.06em;}
+  .rec-dot{width:8px; height:8px; border-radius:50%; background:var(--red); animation:pulse 1.4s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:0.25;}}
+  .rec-indicator.paused .rec-dot{background:var(--ink-dim); animation:none;}
+
+  .hud-bottom{position:relative; z-index:3; margin-top:auto; padding:0 0 calc(26px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; align-items:center; gap:16px;}
+  .hud-bottom .next-label{font-size:12px; color:var(--ink-dim);}
+  .shutter-wrap{position:relative; width:92px; height:92px; display:flex; align-items:center; justify-content:center;}
+  .ring{position:absolute; inset:0;}
+  .ring circle{fill:none; stroke-width:3;}
+  .ring .track{stroke:rgba(255,255,255,0.1);}
+  .ring .fill{stroke:var(--amber); stroke-linecap:round; transform:rotate(-90deg); transform-origin:50% 50%; transition:stroke-dashoffset 0.2s linear;}
+  .shutter{
+    width:68px; height:68px; border-radius:50%; background:var(--red); border:4px solid rgba(255,255,255,0.85);
+  }
+  .est-line{font-size:11.5px; color:var(--ink-dim); text-align:center; max-width:280px;}
+  .est-line b{color:var(--ink);}
+
+  /* --- Ecran bilan / export --- */
+  #reviewScreen{background:var(--bg); padding:0 18px; align-items:stretch; justify-content:flex-start;}
+  .review-head{padding:20px 2px 12px;}
+  .review-head h2{margin:0 0 4px; font-size:19px;}
+  .review-head p{margin:0; font-size:13px; color:var(--ink-dim);}
+  #resultVideo{width:100%; border-radius:16px; background:#000; margin-top:6px; max-height:46vh;}
+  .review-stats{display:flex; gap:10px; margin:14px 0;}
+  .stat{flex:1; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:10px 12px;}
+  .stat .n{font-size:18px; font-weight:700;}
+  .stat .l{font-size:10.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:0.06em;}
+  .review-actions{margin-top:auto; padding-bottom:calc(20px + env(safe-area-inset-bottom));}
+  .review-actions .btn{margin-top:10px;}
+  .save-note{font-size:11.5px; color:var(--ink-dim); text-align:center; margin-top:8px;}
+
+  /* --- Overlays d'état --- */
+  #blockOverlay{
+    position:fixed; inset:0; z-index:20; background:var(--bg); display:none;
+    flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px;
+  }
+  #blockOverlay.show{display:flex;}
+  #blockOverlay .glyph{font-size:34px; margin-bottom:14px;}
+  #blockOverlay h2{font-size:17px; margin:0 0 8px;}
+  #blockOverlay p{font-size:13.5px; color:var(--ink-dim); line-height:1.6; max-width:320px; margin:0 0 18px;}
+  #blockOverlay .btn{width:auto; padding:12px 22px;}
+
+  .hidden{display:none !important;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ECRAN 1 : CADRAGE + REGLAGES -->
+  <section id="setupScreen" class="screen active">
+    <div class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <h1>Time-lapse</h1>
+      </div>
+      <div class="status-pill" id="camStatus">Caméra…</div>
+    </div>
+
+    <div id="camWrap">
+      <video id="camPreview" autoplay playsinline muted></video>
+    </div>
+
+    <div class="sheet">
+      <div class="card">
+        <div class="row">
+          <div class="label">Intervalle entre deux photos</div>
+        </div>
+        <div class="interval-controls">
+          <div class="stepper">
+            <button id="intMinus" type="button">–</button>
+            <input id="intValue" class="num" type="number" inputmode="numeric" min="1" max="60" value="30">
+            <button id="intPlus" type="button">+</button>
+          </div>
+          <div class="unit-toggle">
+            <button id="unitSec" class="on" type="button">secondes</button>
+            <button id="unitMin" type="button">minutes</button>
+          </div>
+        </div>
+        <div class="ratio-line" id="ratioLine"></div>
+      </div>
+
+      <div class="card">
+        <ul class="tips">
+          <li>iPad branché au secteur, posé sur un support stable</li>
+          <li>Réglages → Écran et luminosité → Verrouillage auto → Jamais</li>
+          <li>Laisser cette page au premier plan pendant toute la prise de vue</li>
+        </ul>
+      </div>
+
+      <button id="startBtn" class="btn btn-primary" disabled>Cadrage en cours…</button>
+    </div>
+  </section>
+
+  <!-- ECRAN 2 : ENREGISTREMENT -->
+  <section id="recordScreen" class="screen">
+    <div id="camWrap2" style="position:absolute; inset:0; background:#000;">
+      <!-- la balise video du live est déplacée ici au démarrage -->
+    </div>
+
+    <div class="hud-top">
+      <div class="hud-card hud-frames">
+        <div class="n num" id="frameCount">0</div>
+        <div class="l">photos captées</div>
+      </div>
+      <div class="hud-card" style="text-align:right;">
+        <div class="rec-indicator" id="recIndicator"><span class="rec-dot"></span>EN COURS</div>
+        <div class="hud-clock" style="margin-top:6px;">
+          <div class="n num" id="elapsedTime">00:00:00</div>
+          <div class="l">durée réelle</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-bottom">
+      <div class="next-label">prochaine photo dans <span class="num" id="nextIn">--</span></div>
+      <div class="shutter-wrap">
+        <svg class="ring" viewBox="0 0 92 92">
+          <circle class="track" cx="46" cy="46" r="40"></circle>
+          <circle class="fill" id="ringFill" cx="46" cy="46" r="40" stroke-dasharray="251.2" stroke-dashoffset="0"></circle>
+        </svg>
+        <button id="stopBtn" class="shutter" type="button" aria-label="Terminer"></button>
+      </div>
+      <div class="est-line">Vidéo actuelle : <b id="estDuration">0 s</b> à 24 im/s — appuyer sur le bouton rouge pour terminer et enregistrer</div>
+    </div>
+  </section>
+
+  <!-- ECRAN 3 : BILAN / EXPORT -->
+  <section id="reviewScreen" class="screen">
+    <div class="review-head">
+      <h2>Time-lapse terminé</h2>
+      <p>Vérifiez l'aperçu, puis enregistrez dans Photos.</p>
+    </div>
+    <video id="resultVideo" controls playsinline></video>
+    <div class="review-stats">
+      <div class="stat"><div class="n num" id="statFrames">0</div><div class="l">photos</div></div>
+      <div class="stat"><div class="n num" id="statLength">0:00</div><div class="l">durée vidéo</div></div>
+      <div class="stat"><div class="n num" id="statReal">0 h</div><div class="l">durée réelle</div></div>
+    </div>
+    <div class="review-actions">
+      <button id="saveBtn" class="btn btn-primary">Enregistrer dans Photos</button>
+      <button id="downloadBtn" class="btn btn-ghost">Télécharger le fichier vidéo</button>
+      <button id="newBtn" class="btn btn-ghost">Nouveau time-lapse</button>
+      <div class="save-note">Si « Enregistrer dans Photos » ne s'affiche pas, utilisez le téléchargement puis « Enregistrer la vidéo » depuis le partage du fichier.</div>
+    </div>
+  </section>
+
+  <canvas id="captureCanvas"></canvas>
+</div>
+
+<div id="blockOverlay">
+  <div class="glyph">⏱</div>
+  <h2 id="blockTitle">Chargement…</h2>
+  <p id="blockText"></p>
+  <button id="blockBtn" class="btn btn-primary hidden" type="button">Réessayer</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Références DOM ----------
+  const setupScreen   = document.getElementById('setupScreen');
+  const recordScreen  = document.getElementById('recordScreen');
+  const reviewScreen  = document.getElementById('reviewScreen');
+  const camPreview    = document.getElementById('camPreview');
+  const camWrap2      = document.getElementById('camWrap2');
+  const camStatus     = document.getElementById('camStatus');
+  const startBtn      = document.getElementById('startBtn');
+  const stopBtn       = document.getElementById('stopBtn');
+  const intValue      = document.getElementById('intValue');
+  const intMinus      = document.getElementById('intMinus');
+  const intPlus       = document.getElementById('intPlus');
+  const unitSecBtn    = document.getElementById('unitSec');
+  const unitMinBtn    = document.getElementById('unitMin');
+  const ratioLine     = document.getElementById('ratioLine');
+  const frameCountEl  = document.getElementById('frameCount');
+  const elapsedTimeEl = document.getElementById('elapsedTime');
+  const nextInEl      = document.getElementById('nextIn');
+  const estDurationEl = document.getElementById('estDuration');
+  const ringFill      = document.getElementById('ringFill');
+  const recIndicator  = document.getElementById('recIndicator');
+  const resultVideo   = document.getElementById('resultVideo');
+  const statFrames    = document.getElementById('statFrames');
+  const statLength    = document.getElementById('statLength');
+  const statReal      = document.getElementById('statReal');
+  const saveBtn       = document.getElementById('saveBtn');
+  const downloadBtn   = document.getElementById('downloadBtn');
+  const newBtn        = document.getElementById('newBtn');
+  const canvas         = document.getElementById('captureCanvas');
+  const ctx            = canvas.getContext('2d', { alpha:false });
+  const blockOverlay  = document.getElementById('blockOverlay');
+  const blockTitle    = document.getElementById('blockTitle');
+  const blockText     = document.getElementById('blockText');
+  const blockBtn      = document.getElementById('blockBtn');
+
+  const FPS = 24;
+  const FRAME_DURATION_US = Math.round(1e6 / FPS);
+  const RING_CIRCUMFERENCE = 2 * Math.PI * 40;
+
+  let unit = 'sec'; // 'sec' | 'min'
+  let stream = null;
+  let wakeLock = null;
+
+  let recording = false;
+  let frameIndex = 0;
+  let intervalMs = 30000;
+  let nextCaptureAt = 0;
+  let recordStartedAt = 0;
+  let schedulerId = null;
+  let ringRafId = null;
+
+  let muxer = null;
+  let videoEncoder = null;
+  let outWidth = 0, outHeight = 0;
+  let resultBlob = null;
+  let resultFrames = 0;
+  let resultRealMs = 0;
+
+  // ---------- Ecran de blocage (erreurs / incompatibilité) ----------
+  function showBlock(title, text, retryFn){
+    blockTitle.textContent = title;
+    blockText.textContent = text;
+    if(retryFn){
+      blockBtn.classList.remove('hidden');
+      blockBtn.onclick = retryFn;
+    } else {
+      blockBtn.classList.add('hidden');
+    }
+    blockOverlay.classList.add('show');
+  }
+  function hideBlock(){ blockOverlay.classList.remove('show'); }
+
+  // ---------- Compatibilité ----------
+  function checkCompat(){
+    if(!('mediaDevices' in navigator) || !navigator.mediaDevices.getUserMedia){
+      showBlock("Caméra indisponible", "Ce navigateur ne permet pas d'accéder à la caméra. Utilisez Safari récent sur iPad, en HTTPS.");
+      return false;
+    }
+    if(typeof window.VideoEncoder === 'undefined' || typeof window.VideoFrame === 'undefined'){
+      showBlock("Mise à jour nécessaire", "La fabrication vidéo requiert WebCodecs, disponible depuis iPadOS 16.4. Mettez à jour iPadOS puis relancez la page.");
+      return false;
+    }
+    if(typeof window.Mp4Muxer === 'undefined'){
+      showBlock("Chargement impossible", "Le moteur d'assemblage vidéo n'a pas pu être chargé. Vérifiez la connexion Internet au premier lancement, puis relancez la page.", initCamera);
+      return false;
+    }
+    return true;
+  }
+
+  // ---------- Caméra ----------
+  async function initCamera(){
+    hideBlock();
+    camStatus.textContent = "Caméra…";
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{
+          facingMode:{ ideal:'environment' },
+          width:{ ideal:1920 },
+          height:{ ideal:1080 }
+        }
+      });
+      camPreview.srcObject = stream;
+      await camPreview.play().catch(()=>{});
+      camStatus.textContent = "Cadrage";
+      startBtn.disabled = false;
+      startBtn.textContent = "Démarrer le time-lapse";
+    }catch(err){
+      camStatus.textContent = "Caméra indisponible";
+      showBlock(
+        "Accès caméra refusé",
+        "Autorisez l'accès à la caméra pour ce site (Réglages Safari → Caméra), puis réessayez.",
+        initCamera
+      );
+    }
+  }
+
+  // ---------- Réglage de l'intervalle ----------
+  function clampInt(v){ return Math.min(60, Math.max(1, v||1)); }
+  function refreshRatio(){
+    const v = clampInt(parseInt(intValue.value,10));
+    intValue.value = v;
+    const seconds = unit === 'sec' ? v : v*60;
+    intervalMs = seconds*1000;
+    const realSecondsPerOutputSecond = seconds*FPS;
+    const h = Math.floor(realSecondsPerOutputSecond/3600);
+    const m = Math.floor((realSecondsPerOutputSecond%3600)/60);
+    const s = Math.round(realSecondsPerOutputSecond%60);
+    let dur;
+    if(h>0) dur = h+" h "+String(m).padStart(2,'0')+" min";
+    else if(m>0) dur = m+" min "+String(s).padStart(2,'0')+" s";
+    else dur = s+" s";
+    ratioLine.innerHTML = "1 photo toutes les "+seconds+" s — <b>"+dur+"</b> filmées ≈ 1 seconde de vidéo (24 im/s)";
+  }
+  intMinus.addEventListener('click', ()=>{ intValue.value = clampInt(parseInt(intValue.value,10)-1); refreshRatio(); });
+  intPlus.addEventListener('click', ()=>{ intValue.value = clampInt(parseInt(intValue.value,10)+1); refreshRatio(); });
+  intValue.addEventListener('input', refreshRatio);
+  intValue.addEventListener('blur', refreshRatio);
+  unitSecBtn.addEventListener('click', ()=>{ unit='sec'; unitSecBtn.classList.add('on'); unitMinBtn.classList.remove('on'); refreshRatio(); });
+  unitMinBtn.addEventListener('click', ()=>{ unit='min'; unitMinBtn.classList.add('on'); unitSecBtn.classList.remove('on'); refreshRatio(); });
+  refreshRatio();
+
+  // ---------- Wake lock ----------
+  async function requestWakeLock(){
+    try{
+      if('wakeLock' in navigator){
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    }catch(e){ /* silencieux : réessaiera au retour au premier plan */ }
+  }
+  document.addEventListener('visibilitychange', async ()=>{
+    if(recording){
+      recIndicator.classList.toggle('paused', document.hidden);
+      recIndicator.lastChild ? null : null;
+      const label = document.hidden ? "EN PAUSE" : "EN COURS";
+      recIndicator.childNodes[1] && (recIndicator.childNodes[1].textContent = label);
+      if(!document.hidden){ await requestWakeLock(); }
+    }
+  });
+
+  // ---------- Encodeur vidéo ----------
+  async function setupEncoder(width, height){
+    outWidth = width; outHeight = height;
+    muxer = new Mp4Muxer.Muxer({
+      target: new Mp4Muxer.ArrayBufferTarget(),
+      video:{ codec:'avc', width, height },
+      fastStart:'in-memory'
+    });
+    videoEncoder = new VideoEncoder({
+      output:(chunk, meta)=> muxer.addVideoChunk(chunk, meta),
+      error:(e)=> {
+        console.error(e);
+        stopRecording(true);
+        showBlock("Erreur d'encodage", "Détail : " + (e && e.message ? e.message : e));
+      }
+    });
+    // profils/niveaux du plus large au plus contraint, avec repli logiciel en dernier recours
+    const candidates = [
+      { codec:'avc1.640028', hardwareAcceleration:'no-preference' }, // High@4.0
+      { codec:'avc1.4d0028', hardwareAcceleration:'no-preference' }, // Main@4.0
+      { codec:'avc1.42001f', hardwareAcceleration:'no-preference' }, // Baseline@3.1
+      { codec:'avc1.640028', hardwareAcceleration:'prefer-software' },
+      { codec:'avc1.42001f', hardwareAcceleration:'prefer-software' }
+    ];
+    let configured = false, lastErr = null;
+    for(const c of candidates){
+      const config = { codec:c.codec, width, height, bitrate:4_000_000, framerate:FPS, hardwareAcceleration:c.hardwareAcceleration };
+      try{
+        const support = await VideoEncoder.isConfigSupported(config);
+        if(support.supported){
+          videoEncoder.configure(config);
+          configured = true;
+          break;
+        }
+      }catch(e){ lastErr = e; /* essaie le suivant */ }
+    }
+    if(!configured) throw new Error("Aucun codec vidéo compatible" + (lastErr ? " (" + lastErr.message + ")" : ""));
+  }
+
+  function computeOutputSize(vw, vh){
+    const maxEdge = 1280;
+    let w = vw, h = vh;
+    if(w > maxEdge){ h = Math.round(h * (maxEdge/w)); w = maxEdge; }
+    // dimensions multiples de 16 (contrainte des encodeurs matériels H.264)
+    w = w - (w%16); h = h - (h%16);
+    if(w < 16) w = 16;
+    if(h < 16) h = 16;
+    return { w, h };
+  }
+
+  // ---------- Démarrage ----------
+  startBtn.addEventListener('click', async ()=>{
+    if(!stream) return;
+    startBtn.disabled = true;
+    startBtn.textContent = "Préparation…";
+    try{
+      const vw = camPreview.videoWidth || 1280;
+      const vh = camPreview.videoHeight || 720;
+      const { w, h } = computeOutputSize(vw, vh);
+      canvas.width = w; canvas.height = h;
+      await setupEncoder(w, h);
+
+      // déplace le flux live vers l'écran d'enregistrement
+      camWrap2.appendChild(camPreview);
+
+      frameIndex = 0;
+      recording = true;
+      recordStartedAt = Date.now();
+      nextCaptureAt = Date.now(); // première capture immédiate
+
+      await requestWakeLock();
+
+      setupScreen.classList.remove('active');
+      recordScreen.classList.add('active');
+      recIndicator.classList.remove('paused');
+
+      scheduleNext(0);
+      tickClock();
+      tickRing();
+    }catch(err){
+      console.error(err);
+      startBtn.disabled = false;
+      startBtn.textContent = "Démarrer le time-lapse";
+      showBlock("Impossible de démarrer", "La préparation de l'enregistreur vidéo a échoué. Relancez la page et réessayez.");
+    }
+  });
+
+  // ---------- Boucle de capture (planification robuste multi-jours) ----------
+  function scheduleNext(delay){
+    clearTimeout(schedulerId);
+    schedulerId = setTimeout(onTick, delay);
+  }
+  function onTick(){
+    if(!recording) return;
+    captureFrame();
+    nextCaptureAt += intervalMs;
+    const now = Date.now();
+    if(nextCaptureAt < now){ nextCaptureAt = now + intervalMs; } // rattrapage si mise en arrière-plan prolongée
+    scheduleNext(Math.max(0, nextCaptureAt - now));
+  }
+
+  function captureFrame(){
+    try{
+      ctx.drawImage(camPreview, 0, 0, canvas.width, canvas.height);
+      const timestamp = frameIndex * FRAME_DURATION_US;
+      const frame = new VideoFrame(canvas, { timestamp });
+      videoEncoder.encode(frame, { keyFrame:(frameIndex % (FPS*2) === 0) });
+      frame.close();
+      frameIndex++;
+      frameCountEl.textContent = frameIndex;
+      estDurationEl.textContent = formatShort(frameIndex/FPS);
+    }catch(e){
+      console.error("capture échouée", e);
+    }
+  }
+
+  function formatShort(sec){
+    if(sec < 60) return sec.toFixed(1)+" s";
+    const m = Math.floor(sec/60), s = Math.round(sec%60);
+    return m+" min "+String(s).padStart(2,'0')+" s";
+  }
+
+  function tickClock(){
+    if(!recording) return;
+    const elapsed = Date.now() - recordStartedAt;
+    elapsedTimeEl.textContent = formatHMS(elapsed);
+    setTimeout(tickClock, 1000);
+  }
+  function formatHMS(ms){
+    let s = Math.floor(ms/1000);
+    const d = Math.floor(s/86400); s -= d*86400;
+    const h = Math.floor(s/3600); s -= h*3600;
+    const m = Math.floor(s/60); s -= m*60;
+    const hh = String(h).padStart(2,'0');
+    const mm = String(m).padStart(2,'0');
+    const ss = String(s).padStart(2,'0');
+    return d>0 ? (d+"j "+hh+":"+mm+":"+ss) : (hh+":"+mm+":"+ss);
+  }
+
+  function tickRing(){
+    if(!recording) return;
+    const now = Date.now();
+    const total = intervalMs;
+    const remaining = Math.max(0, nextCaptureAt - now);
+    const frac = total>0 ? (1 - remaining/total) : 1;
+    ringFill.setAttribute('stroke-dashoffset', String(RING_CIRCUMFERENCE * (1-frac)));
+    nextInEl.textContent = formatCountdown(remaining);
+    ringRafId = requestAnimationFrame(tickRing);
+  }
+  function formatCountdown(ms){
+    const s = Math.ceil(ms/1000);
+    if(s <= 0) return "0 s";
+    if(s < 60) return s+" s";
+    const m = Math.floor(s/60), r = s%60;
+    return m+" min "+String(r).padStart(2,'0')+" s";
+  }
+
+  // ---------- Arrêt / finalisation ----------
+  stopBtn.addEventListener('click', ()=> stopRecording(false));
+
+  async function stopRecording(silent){
+    if(!recording) return;
+    recording = false;
+    clearTimeout(schedulerId);
+    cancelAnimationFrame(ringRafId);
+    if(wakeLock){ try{ await wakeLock.release(); }catch(e){} wakeLock = null; }
+
+    resultFrames = frameIndex;
+    resultRealMs = Date.now() - recordStartedAt;
+
+    if(silent) return;
+
+    recordScreen.classList.remove('active');
+    // écran d'attente pendant la finalisation
+    showBlock("Finalisation de la vidéo…", "Assemblage des "+frameIndex+" photos captées. Cela prend quelques secondes.");
+
+    try{
+      await videoEncoder.flush();
+      muxer.finalize();
+      const { buffer } = muxer.target;
+      resultBlob = new Blob([buffer], { type:'video/mp4' });
+      hideBlock();
+      showReview();
+    }catch(e){
+      console.error(e);
+      showBlock("Erreur lors de la finalisation", "Détail : " + (e && e.message ? e.message : e));
+    }
+  }
+
+  function showReview(){
+    const url = URL.createObjectURL(resultBlob);
+    resultVideo.src = url;
+    statFrames.textContent = resultFrames;
+    statLength.textContent = formatShort(resultFrames/FPS);
+    statReal.textContent = formatHMS(resultRealMs);
+    reviewScreen.classList.add('active');
+  }
+
+  // ---------- Export ----------
+  function filename(){
+    const d = new Date();
+    const p = (n)=>String(n).padStart(2,'0');
+    return "timelapse-"+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"-"+p(d.getHours())+p(d.getMinutes())+".mp4";
+  }
+
+  saveBtn.addEventListener('click', async ()=>{
+    if(!resultBlob) return;
+    const file = new File([resultBlob], filename(), { type:'video/mp4' });
+    if(navigator.canShare && navigator.canShare({ files:[file] })){
+      try{
+        await navigator.share({ files:[file], title:'Time-lapse' });
+        return;
+      }catch(e){ /* annulé ou échoué : repli sur téléchargement */ }
+    }
+    triggerDownload();
+  });
+
+  downloadBtn.addEventListener('click', triggerDownload);
+
+  function triggerDownload(){
+    if(!resultBlob) return;
+    const url = URL.createObjectURL(resultBlob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=> URL.revokeObjectURL(url), 30000);
+  }
+
+  newBtn.addEventListener('click', ()=>{
+    reviewScreen.classList.remove('active');
+    setupScreen.classList.add('active');
+    camWrap2.removeChild(camPreview);
+    document.getElementById('camWrap').appendChild(camPreview);
+    resultBlob = null;
+    frameCountEl.textContent = "0";
+    elapsedTimeEl.textContent = "00:00:00";
+    estDurationEl.textContent = "0 s";
+  });
+
+  // avertir avant fermeture accidentelle pendant l'enregistrement
+  window.addEventListener('beforeunload', (e)=>{
+    if(recording){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // ---------- Démarrage de l'app ----------
+  window.addEventListener('load', ()=>{
+    if(checkCompat()) initCamera();
+  });
+})();
+</script>
+</body>
+</html>
