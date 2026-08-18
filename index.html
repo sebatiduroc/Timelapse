@@ -170,7 +170,7 @@
   #blockOverlay.show{display:flex;}
   #blockOverlay .glyph{font-size:34px; margin-bottom:14px;}
   #blockOverlay h2{font-size:17px; margin:0 0 8px;}
-  #blockOverlay p{font-size:13.5px; color:var(--ink-dim); line-height:1.6; max-width:320px; margin:0 0 18px;}
+  #blockOverlay p{font-size:13.5px; color:var(--ink-dim); line-height:1.6; max-width:320px; margin:0 0 18px; white-space:pre-line;}
   #blockOverlay .btn{width:auto; padding:12px 22px;}
 
   .hidden{display:none !important;}
@@ -195,7 +195,7 @@
 
     <div class="sheet">
       <div class="sheet-header">
-        <span class="version-tag">v2</span>
+        <span class="version-tag">v3</span>
       </div>
       <div class="card">
         <div class="row">
@@ -350,6 +350,8 @@
   let videoEncoder = null;
   let outWidth = 0, outHeight = 0;
   let gotDecoderConfig = false;
+  let chunkOutputCount = 0;
+  let firstDecoderConfigDebug = null;
   let resultBlob = null;
   let resultFrames = 0;
   let resultRealMs = 0;
@@ -460,6 +462,8 @@
   async function setupEncoder(width, height){
     outWidth = width; outHeight = height;
     gotDecoderConfig = false;
+    chunkOutputCount = 0;
+    firstDecoderConfigDebug = null;
     muxer = new Mp4Muxer.Muxer({
       target: new Mp4Muxer.ArrayBufferTarget(),
       video:{ codec:'avc', width, height },
@@ -467,9 +471,20 @@
     });
     videoEncoder = new VideoEncoder({
       output:(chunk, meta)=> {
+        chunkOutputCount++;
         // Safari ne renseigne pas toujours decoderConfig.colorSpace, requis par le muxer : on le complète.
         if(meta && meta.decoderConfig){
           gotDecoderConfig = true;
+          if(!firstDecoderConfigDebug){
+            try{
+              firstDecoderConfigDebug = JSON.stringify({
+                chunkIndex: chunkOutputCount,
+                codec: meta.decoderConfig.codec,
+                hasDescription: !!meta.decoderConfig.description,
+                colorSpace: meta.decoderConfig.colorSpace || null
+              });
+            }catch(e){ firstDecoderConfigDebug = "impossible à sérialiser"; }
+          }
           if(!meta.decoderConfig.colorSpace){
             meta = Object.assign({}, meta, {
               decoderConfig: Object.assign({}, meta.decoderConfig, {
@@ -478,7 +493,12 @@
             });
           }
         }
-        muxer.addVideoChunk(chunk, meta);
+        try{
+          muxer.addVideoChunk(chunk, meta);
+        }catch(muxErr){
+          console.error("addVideoChunk a échoué", muxErr);
+          throw muxErr;
+        }
       },
       error:(e)=> {
         console.error(e);
@@ -668,7 +688,7 @@
     try{
       await videoEncoder.flush();
       if(!gotDecoderConfig){
-        throw new Error("L'encodeur vidéo de cet appareil n'a fourni aucune configuration de décodage (decoderConfig manquant). La vidéo ne peut pas être assemblée sur ce navigateur/appareil.");
+        throw new Error("L'encodeur vidéo de cet appareil n'a fourni aucune configuration de décodage (decoderConfig manquant). Chunks reçus : " + chunkOutputCount + ".");
       }
       muxer.finalize();
       const { buffer } = muxer.target;
@@ -677,7 +697,8 @@
       showReview();
     }catch(e){
       console.error(e);
-      showBlock("Erreur lors de la finalisation", "Détail : " + (e && e.message ? e.message : e));
+      const debugInfo = "Chunks encodeur : " + chunkOutputCount + " · decoderConfig reçu : " + gotDecoderConfig + " · 1er decoderConfig : " + (firstDecoderConfigDebug || "aucun");
+      showBlock("Erreur lors de la finalisation", "Détail : " + (e && e.message ? e.message : e) + "\n\n" + debugInfo);
     }
   }
 
