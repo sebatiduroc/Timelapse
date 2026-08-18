@@ -195,7 +195,7 @@
 
     <div class="sheet">
       <div class="sheet-header">
-        <span class="version-tag">v1</span>
+        <span class="version-tag">v2</span>
       </div>
       <div class="card">
         <div class="row">
@@ -349,6 +349,7 @@
   let muxer = null;
   let videoEncoder = null;
   let outWidth = 0, outHeight = 0;
+  let gotDecoderConfig = false;
   let resultBlob = null;
   let resultFrames = 0;
   let resultRealMs = 0;
@@ -458,6 +459,7 @@
   // ---------- Encodeur vidéo ----------
   async function setupEncoder(width, height){
     outWidth = width; outHeight = height;
+    gotDecoderConfig = false;
     muxer = new Mp4Muxer.Muxer({
       target: new Mp4Muxer.ArrayBufferTarget(),
       video:{ codec:'avc', width, height },
@@ -467,6 +469,7 @@
       output:(chunk, meta)=> {
         // Safari ne renseigne pas toujours decoderConfig.colorSpace, requis par le muxer : on le complète.
         if(meta && meta.decoderConfig){
+          gotDecoderConfig = true;
           if(!meta.decoderConfig.colorSpace){
             meta = Object.assign({}, meta, {
               decoderConfig: Object.assign({}, meta.decoderConfig, {
@@ -474,11 +477,6 @@
               })
             });
           }
-        } else if(meta && meta.decoderConfig === null){
-          // certains navigateurs renvoient explicitement decoderConfig: null,
-          // ce qui fait planter le muxer à la finalisation ; on retire la clé.
-          meta = Object.assign({}, meta);
-          delete meta.decoderConfig;
         }
         muxer.addVideoChunk(chunk, meta);
       },
@@ -488,13 +486,19 @@
         showBlock("Erreur d'encodage", "Détail : " + (e && e.message ? e.message : e));
       }
     });
-    // profils/niveaux du plus large au plus contraint, avec repli logiciel en dernier recours
+    // profils/niveaux du plus large au plus contraint
+    // On force l'encodage LOGICIEL : sur certains appareils Android (notamment
+    // les modèles d'entrée de gamme ou restreints), l'encodeur matériel AVC ne
+    // fournit jamais 'decoderConfig' dans les métadonnées de sortie, ce qui fait
+    // planter mp4-muxer à la finalisation (decoderConfig reste null). Comme on
+    // encode une image toutes les quelques secondes (pas de flux temps réel),
+    // le coût CPU du logiciel est négligeable et beaucoup plus fiable.
     const candidates = [
-      { codec:'avc1.640028', hardwareAcceleration:'no-preference' }, // High@4.0
-      { codec:'avc1.4d0028', hardwareAcceleration:'no-preference' }, // Main@4.0
-      { codec:'avc1.42001f', hardwareAcceleration:'no-preference' }, // Baseline@3.1
-      { codec:'avc1.640028', hardwareAcceleration:'prefer-software' },
-      { codec:'avc1.42001f', hardwareAcceleration:'prefer-software' }
+      { codec:'avc1.640028', hardwareAcceleration:'prefer-software' }, // High@4.0
+      { codec:'avc1.4d0028', hardwareAcceleration:'prefer-software' }, // Main@4.0
+      { codec:'avc1.42001f', hardwareAcceleration:'prefer-software' }, // Baseline@3.1
+      { codec:'avc1.640028', hardwareAcceleration:'no-preference' },
+      { codec:'avc1.42001f', hardwareAcceleration:'no-preference' }
     ];
     let configured = false, lastErr = null;
     for(const c of candidates){
@@ -663,6 +667,9 @@
 
     try{
       await videoEncoder.flush();
+      if(!gotDecoderConfig){
+        throw new Error("L'encodeur vidéo de cet appareil n'a fourni aucune configuration de décodage (decoderConfig manquant). La vidéo ne peut pas être assemblée sur ce navigateur/appareil.");
+      }
       muxer.finalize();
       const { buffer } = muxer.target;
       resultBlob = new Blob([buffer], { type:'video/mp4' });
