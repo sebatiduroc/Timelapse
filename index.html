@@ -132,11 +132,12 @@
   .hud-bottom{position:relative; z-index:3; margin-top:auto; padding:0 0 calc(26px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; align-items:center; gap:16px;}
   .hud-bottom .next-label{font-size:12px; color:var(--ink-dim);}
   .shutter-wrap{position:relative; width:92px; height:92px; display:flex; align-items:center; justify-content:center;}
-  .ring{position:absolute; inset:0;}
+  .ring{position:absolute; inset:0; pointer-events:none;}
   .ring circle{fill:none; stroke-width:3;}
   .ring .track{stroke:rgba(255,255,255,0.1);}
   .ring .fill{stroke:var(--amber); stroke-linecap:round; transform:rotate(-90deg); transform-origin:50% 50%; transition:stroke-dashoffset 0.2s linear;}
   .shutter{
+    position:relative; z-index:2;
     width:68px; height:68px; border-radius:50%; background:var(--red); border:4px solid rgba(255,255,255,0.85);
   }
   .est-line{font-size:11.5px; color:var(--ink-dim); text-align:center; max-width:280px;}
@@ -515,6 +516,8 @@
       recording = true;
       recordStartedAt = Date.now();
       nextCaptureAt = Date.now(); // première capture immédiate
+      stopBtn.disabled = false;
+      stopBtn.style.opacity = '1';
 
       await requestWakeLock();
 
@@ -604,7 +607,12 @@
   }
 
   // ---------- Arrêt / finalisation ----------
-  stopBtn.addEventListener('click', ()=> stopRecording(false));
+  stopBtn.addEventListener('click', ()=>{
+    if(stopBtn.disabled) return;
+    stopBtn.disabled = true;
+    stopBtn.style.opacity = '0.5';
+    stopRecording(false);
+  });
 
   async function stopRecording(silent){
     if(!recording) return;
