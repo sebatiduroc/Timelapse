@@ -195,7 +195,7 @@
 
     <div class="sheet">
       <div class="sheet-header">
-        <span class="version-tag">v3</span>
+        <span class="version-tag">v4</span>
       </div>
       <div class="card">
         <div class="row">
@@ -352,6 +352,7 @@
   let gotDecoderConfig = false;
   let chunkOutputCount = 0;
   let firstDecoderConfigDebug = null;
+  let cachedDecoderConfig = null;
   let resultBlob = null;
   let resultFrames = 0;
   let resultRealMs = 0;
@@ -464,6 +465,7 @@
     gotDecoderConfig = false;
     chunkOutputCount = 0;
     firstDecoderConfigDebug = null;
+    cachedDecoderConfig = null;
     muxer = new Mp4Muxer.Muxer({
       target: new Mp4Muxer.ArrayBufferTarget(),
       video:{ codec:'avc', width, height },
@@ -475,30 +477,30 @@
         // Safari ne renseigne pas toujours decoderConfig.colorSpace, requis par le muxer : on le complète.
         if(meta && meta.decoderConfig){
           gotDecoderConfig = true;
+          let dc = meta.decoderConfig;
+          if(!dc.colorSpace){
+            dc = Object.assign({}, dc, {
+              colorSpace: { primaries:'bt709', transfer:'bt709', matrix:'bt709', fullRange:false }
+            });
+          }
+          cachedDecoderConfig = dc;
           if(!firstDecoderConfigDebug){
             try{
               firstDecoderConfigDebug = JSON.stringify({
                 chunkIndex: chunkOutputCount,
-                codec: meta.decoderConfig.codec,
-                hasDescription: !!meta.decoderConfig.description,
-                colorSpace: meta.decoderConfig.colorSpace || null
+                codec: dc.codec,
+                hasDescription: !!dc.description,
+                colorSpace: dc.colorSpace || null
               });
             }catch(e){ firstDecoderConfigDebug = "impossible à sérialiser"; }
           }
-          if(!meta.decoderConfig.colorSpace){
-            meta = Object.assign({}, meta, {
-              decoderConfig: Object.assign({}, meta.decoderConfig, {
-                colorSpace: { primaries:'bt709', transfer:'bt709', matrix:'bt709', fullRange:false }
-              })
-            });
-          }
+          meta = Object.assign({}, meta, { decoderConfig: dc });
+        } else if(cachedDecoderConfig){
+          // aucun decoderConfig sur ce chunk : on réinjecte le dernier connu et valide,
+          // au cas où le muxer perdrait l'info en interne entre deux chunks.
+          meta = Object.assign({}, meta || {}, { decoderConfig: cachedDecoderConfig });
         }
-        try{
-          muxer.addVideoChunk(chunk, meta);
-        }catch(muxErr){
-          console.error("addVideoChunk a échoué", muxErr);
-          throw muxErr;
-        }
+        muxer.addVideoChunk(chunk, meta);
       },
       error:(e)=> {
         console.error(e);
@@ -685,19 +687,22 @@
     // écran d'attente pendant la finalisation
     showBlock("Finalisation de la vidéo…", "Assemblage des "+frameIndex+" photos captées. Cela prend quelques secondes.");
 
+    let stage = "flush";
     try{
       await videoEncoder.flush();
       if(!gotDecoderConfig){
         throw new Error("L'encodeur vidéo de cet appareil n'a fourni aucune configuration de décodage (decoderConfig manquant). Chunks reçus : " + chunkOutputCount + ".");
       }
+      stage = "finalize";
       muxer.finalize();
+      stage = "blob";
       const { buffer } = muxer.target;
       resultBlob = new Blob([buffer], { type:'video/mp4' });
       hideBlock();
       showReview();
     }catch(e){
       console.error(e);
-      const debugInfo = "Chunks encodeur : " + chunkOutputCount + " · decoderConfig reçu : " + gotDecoderConfig + " · 1er decoderConfig : " + (firstDecoderConfigDebug || "aucun");
+      const debugInfo = "Étape : " + stage + " · Chunks encodeur : " + chunkOutputCount + " · decoderConfig reçu : " + gotDecoderConfig + " · cache valide : " + (!!cachedDecoderConfig) + " · 1er decoderConfig : " + (firstDecoderConfigDebug || "aucun");
       showBlock("Erreur lors de la finalisation", "Détail : " + (e && e.message ? e.message : e) + "\n\n" + debugInfo);
     }
   }
